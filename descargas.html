@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Descargas de registros</title>
+  <link rel="stylesheet" href="descargas.css">
+</head>
+<body>
+  <main class="container">
+    <header class="topbar">
+      <h1>Descargas</h1>
+      <nav><a class="btn-link" href="index.html">Volver al Formulario ⤴</a></nav>
+    </header>
+
+    <section class="panel">
+      <div class="grid">
+        <div>
+          <h2>Exportar</h2>
+          <div class="stack">
+            <label class="inline">
+              Separador CSV:
+              <select id="csvSep">
+                <option value=",">Coma (,)</option>
+                <option value=";">Punto y coma (;)</option>
+              </select>
+            </label>
+            <button id="btnExportCsv">Descargar CSV</button>
+            <button id="btnExportJson" class="ghost">Descargar JSON</button>
+          </div>
+          <p class="hint">
+            Si Excel te muestra todo en una columna, usa <strong>Punto y coma (;)</strong> como separador.
+          </p>
+        </div>
+
+        <div>
+          <h2>Registros</h2>
+          <div class="stats">
+            <div class="stat">
+              <div class="stat-num" id="countReg">0</div>
+              <div class="stat-label">Total guardados</div>
+            </div>
+            <div class="stat">
+              <div class="stat-num" id="lastDate">—</div>
+              <div class="stat-label">Último registro</div>
+            </div>
+          </div>
+          <button id="btnBorrar" class="danger">Borrar todos</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Vista previa</h2>
+      <div id="listaRegistros" class="lista"></div>
+    </section>
+
+    <p id="msg" class="msg" aria-live="polite"></p>
+  </main>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const LS_KEY = 'registros_simple';
+
+    const listaRegistros = $('#listaRegistros');
+    const countReg = $('#countReg');
+    const lastDate = $('#lastDate');
+    const msg = $('#msg');
+    const btnExportCsv = $('#btnExportCsv');
+    const btnExportJson = $('#btnExportJson');
+    const btnBorrar = $('#btnBorrar');
+    const csvSep = $('#csvSep');
+
+    function leerRegistros() {
+      try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); }
+      catch { return []; }
+    }
+    function guardarRegistros(arr) {
+      localStorage.setItem(LS_KEY, JSON.stringify(arr));
+    }
+
+    function render() {
+      const arr = leerRegistros();
+      countReg.textContent = arr.length;
+
+      if (!arr.length) {
+        lastDate.textContent = '—';
+        listaRegistros.innerHTML = '<p class="vacio">No hay registros para mostrar.</p>';
+        return;
+      }
+
+      const last = arr.slice().sort((a,b) => (a.creado_en || '').localeCompare(b.creado_en || '')).pop();
+      lastDate.textContent = last?.creado_en ? formatHuman(last.creado_en) : '—';
+
+      listaRegistros.innerHTML = arr.map((r, idx) => `
+        <div class="item">
+          <div class="item-left">
+            <strong>${escapeHtml(r.nombre)}</strong>
+            <span class="meta">${escapeHtml(r.email)} • ${escapeHtml(r.telefono)}</span>
+          </div>
+          <div class="item-right">
+            <span class="fecha">Cumple: ${formatDate(r.cumple)}</span>
+            <button data-index="${idx}" class="btn-eliminar" title="Eliminar">Eliminar</button>
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('.btn-eliminar').forEach(btn => {
+        btn.addEventListener('click', () => eliminarRegistro(Number(btn.dataset.index)));
+      });
+    }
+
+    function formatDate(d) {
+      if (!d) return '';
+      const p = d.split('-');
+      return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : d;
+    }
+
+    function formatHuman(iso) {
+      try {
+        const dt = new Date(iso);
+        const two = n => String(n).padStart(2,'0');
+        return `${two(dt.getDate())}/${two(dt.getMonth()+1)}/${dt.getFullYear()} ${two(dt.getHours())}:${two(dt.getMinutes())}`;
+      } catch { return iso; }
+    }
+
+    function escapeHtml(s) {
+      return String(s || '')
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function mostrarMensaje(t, tipo = 'ok') {
+      msg.textContent = t;
+      msg.className = 'msg ' + (tipo === 'ok' ? 'ok' : 'err');
+      setTimeout(() => { msg.textContent = ''; msg.className = 'msg'; }, 2600);
+    }
+
+    function eliminarRegistro(index) {
+      const arr = leerRegistros();
+      if (index >= 0 && index < arr.length) {
+        arr.splice(index, 1);
+        guardarRegistros(arr);
+        render();
+        mostrarMensaje('Registro eliminado', 'ok');
+      }
+    }
+
+    // === Exportar CSV corregido ===
+    btnExportCsv.addEventListener('click', () => {
+      const data = leerRegistros();
+      if (!data.length) return mostrarMensaje('No hay registros para exportar', 'err');
+
+      const headers = ['nombre','telefono','email','cumple','creado_en'];
+      const delimiter = csvSep.value; // ',' o ';'
+      const csv = toCSV(data, headers, delimiter);
+
+      // BOM UTF-8 para Excel
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `registros_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    // === Función CSV limpia ===
+    function toCSV(rows, headers, delimiter = ',') {
+      const esc = (val) => {
+        if (val === null || val === undefined) return '';
+        let s = String(val);
+
+        // Reformatear fecha de cumpleaños (YYYY-MM-DD → DD/MM/YYYY)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+          const [Y,M,D] = s.split('-');
+          s = `${D}/${M}/${Y}`;
+        }
+
+        // Escapar comillas
+        if (s.includes('"')) s = s.replace(/"/g, '""');
+
+        // Si contiene comillas, salto o el delimitador, envolver con comillas
+        const needsQuotes = s.includes('"') || s.includes('\n') || s.includes('\r') || s.includes(delimiter);
+        return needsQuotes ? `"${s}"` : s;
+      };
+
+      const lines = [];
+      lines.push(headers.join(delimiter));
+
+      for (const r of rows) {
+        lines.push(headers.map(h => esc(r[h])).join(delimiter));
+      }
+
+      // Salto de línea real (no texto literal)
+      return lines.join('\r\n');
+    }
+
+    // === Exportar JSON ===
+    btnExportJson.addEventListener('click', () => {
+      const arr = leerRegistros();
+      if (!arr.length) return mostrarMensaje('No hay registros para exportar', 'err');
+
+      const dataStr = JSON.stringify(arr, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `registros_${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    // === Borrar todo ===
+    btnBorrar.addEventListener('click', () => {
+      if (!confirm('¿Borrar todos los registros? Esta acción no se puede deshacer.')) return;
+      localStorage.removeItem(LS_KEY);
+      render();
+      mostrarMensaje('Todos los registros fueron eliminados', 'ok');
+    });
+
+    // === Inicializar ===
+    render();
+  </script>
+</body>
+</html>
